@@ -17,6 +17,19 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 
+class SuggestedAdditions(BaseModel):
+    """Per-axis suggestions the user might also want to enable.
+
+    Mirrors the multi-valued fields on ``CriteriaSpec``. The UI presents these
+    as unchecked checkboxes alongside the agent-extracted (checked) values.
+    """
+
+    performance_constraints: list[str] = Field(default_factory=list)
+    certifications_required: list[str] = Field(default_factory=list)
+    aesthetic_qualities: list[str] = Field(default_factory=list)
+    material_categories: list[str] = Field(default_factory=list)
+
+
 class CriteriaSpec(BaseModel):
     """Structured interpretation of a free-text architect brief.
 
@@ -56,6 +69,14 @@ class CriteriaSpec(BaseModel):
     branded_preferences: list[str] = Field(
         default_factory=list,
         description="Vendor names the brief explicitly mentions. Empty otherwise.",
+    )
+    suggested_additions: SuggestedAdditions = Field(
+        default_factory=SuggestedAdditions,
+        description=(
+            "Optional adjacent items the architect might also want to add but "
+            "did not state in the brief. Surfaced as unchecked options in the "
+            "UI so users can opt in. Never auto-applied."
+        ),
     )
 
 
