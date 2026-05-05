@@ -113,14 +113,14 @@ async def rank(
     )
 
     recommendations = output.recommendations[:top_n]
-    # Defensive: ensure each rec has the baseline auto-derived caveats so the
-    # architect always sees a verification list, regardless of what the LLM did.
-    base_caveats = _baseline_caveats(criteria)
+    # Defensive: ensure every user-stated cert/perf constraint appears somewhere
+    # in the caveats list. If the LLM already covered a constraint by name we
+    # skip adding the generic line for it, to avoid the kind of redundant pair
+    # like ("Verify LEED Possible Points contribution...", "Verify 'LEED Silver'
+    # on the manufacturer spec sheet.").
     for rec in recommendations:
-        existing = {c.lower() for c in rec.caveats}
-        for cav in base_caveats:
-            if cav.lower() not in existing:
-                rec.caveats.append(cav)
+        for cav in _missing_baseline_caveats(criteria, rec.caveats):
+            rec.caveats.append(cav)
 
     return Report(
         brief=criteria.raw_brief,
@@ -166,13 +166,19 @@ def _build_user_payload(
     )
 
 
-def _baseline_caveats(criteria: CriteriaSpec) -> list[str]:
+def _missing_baseline_caveats(
+    criteria: CriteriaSpec, existing: list[str]
+) -> list[str]:
+    """Return baseline caveats whose criterion phrase isn't already mentioned."""
+    blob = " ".join(c.lower() for c in existing)
     items: list[str] = []
     for cert in criteria.certifications_required:
-        items.append(f"Verify '{cert}' on the manufacturer spec sheet.")
+        if cert.lower() not in blob:
+            items.append(f"Verify '{cert}' on the manufacturer spec sheet.")
     for perf in criteria.performance_constraints:
-        items.append(f"Verify '{perf}' is met per the manufacturer spec sheet.")
-    if not items:
+        if perf.lower() not in blob:
+            items.append(f"Verify '{perf}' is met per the manufacturer spec sheet.")
+    if not existing and not items:
         items.append(
             "Acelab catalog data does not include product attribute detail. "
             "Verify all functional and certification requirements on each "
