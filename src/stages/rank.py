@@ -1,0 +1,181 @@
+"""Stage 4 — RANK & EXPLAIN.
+
+Take the deduplicated product hits from Stage 3 and produce ranked
+recommendations with grounded ``why_it_fits`` text. The Stage 4 prompt is the
+single most important hallucination guard in the pipeline: the LLM may cite
+which axes a product matched (data we have) but is forbidden from claiming
+certifications, materials, or specs (data we don't have).
+
+A baseline ``caveats`` list is auto-derived from the CriteriaSpec so an
+architect always sees what they must verify off-platform, regardless of what
+the LLM produces.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+from src.llm import structured_completion
+from src.schemas import (
+    CriteriaSpec,
+    GroundedContext,
+    ProductHit,
+    Recommendation,
+    Report,
+)
+
+TOP_PRODUCTS_TO_CONSIDER = 30
+DEFAULT_TOP_N = 8
+
+
+class _RankedOutput(BaseModel):
+    """LLM produces the ranked list; we wrap it into a Report afterward."""
+
+    recommendations: list[Recommendation] = Field(
+        ...,
+        description=f"Top {DEFAULT_TOP_N} ranked recommendations.",
+    )
+
+
+SYSTEM_PROMPT = """You are a senior architectural materials specialist producing the final ranked recommendations from a pre-filtered candidate pool.
+
+THE INPUT CONTAINS, AND ONLY CONTAINS:
+- The architect's CriteriaSpec (their structured intent).
+- A GroundedContext (canonical certs, MasterFormat codes, verified vendors — the catalog's view of the user's constraints).
+- A pool of candidate products, each with PROVENANCE: which decomposed queries surfaced the product, the axis label of each query, and the similarity score.
+
+THE INPUT DOES NOT CONTAIN PRODUCT-LEVEL ATTRIBUTES. The Acelab API returns no per-product certifications, materials, ratings, dimensions, sustainability data, slip ratings, or composition info.
+
+THEREFORE — `why_it_fits` MUST cite ONLY:
+- Which axes of the CriteriaSpec the product matched (from the QueryMatch axis labels).
+- The similarity scores of those matches.
+- The supplier name and `market_status` (e.g. "Live on Acelab" indicates the supplier is currently published in the catalog).
+- Canonical MasterFormat code or taxonomy label from GroundedContext when applicable.
+
+`why_it_fits` MUST NOT:
+- Claim the product is "certified" / "rated" / "compliant" with any standard. The API never returned that. Even if the product NAME suggests it (e.g. "BioSpec" sounds like it might be antimicrobial), do not assert it. The architect verifies on the manufacturer spec sheet.
+- Invent material composition, specs, dimensions, performance ratings, or sustainability attributes.
+- Use marketing language ("premium", "industry-leading"). Stick to facts the input supports.
+
+ALLOWED PHRASING EXAMPLES:
+- "Surfaced for 'category: flooring' (0.81) and 'performance: infection control' (0.76). Supplier Mannington Commercial is Live on Acelab."
+- "Highest match for the calming aesthetic axis (0.83). Categorized under MasterFormat 09 65 00 Resilient Flooring per grounding."
+- "Matches three axes: category: wall protection (0.80), category: ceiling (0.78), and synthesis: hospital corridor (0.75)."
+
+FORBIDDEN PHRASING EXAMPLES (these would be hallucinations):
+- "GREENGUARD Gold certified" — not in the input.
+- "Antimicrobial coating" — speculation from the product name.
+- "Meets ASTM E84 Class A" — never asserted by the API.
+- "Low-VOC compliant" — even if the user asked for low-VOC, we don't know the product satisfies it.
+
+RANKING:
+- Pick exactly the top {top_n} products from the candidate pool. If fewer than {top_n} candidates exist, return all of them.
+- Rank by: (a) breadth of axes matched (more orthogonal axes = better), (b) match scores, (c) coverage across material categories the user requested (don't return 8 flooring products if the user also asked for wall and ceiling).
+- `fit_score` (0.0–1.0): your judgment of how well the product satisfies the brief, given the provenance available.
+- `matched_axes`: the distinct axis labels from the QueryMatches for that product.
+
+CAVEATS:
+For each recommendation, include caveats listing what the architect must independently verify on the manufacturer spec sheet — every certification or performance constraint the user asked for is a verification item, since the API didn't confirm them. Be specific (cite the criterion name).
+
+Now rank.""".replace("{top_n}", str(DEFAULT_TOP_N))
+
+
+async def rank(
+    criteria: CriteriaSpec,
+    grounded: GroundedContext,
+    hits: list[ProductHit],
+    *,
+    top_n: int = DEFAULT_TOP_N,
+) -> Report:
+    """Rank the product hits into a final Report."""
+    candidates = sorted(hits, key=lambda h: h.best_score, reverse=True)[
+        :TOP_PRODUCTS_TO_CONSIDER
+    ]
+
+    if not candidates:
+        return Report(
+            brief=criteria.raw_brief,
+            criteria=criteria,
+            grounded=grounded,
+            recommendations=[],
+            total_products_considered=0,
+        )
+
+    user_payload = _build_user_payload(criteria, grounded, candidates)
+
+    output = await structured_completion(
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_payload},
+        ],
+        response_model=_RankedOutput,
+        temperature=0.2,
+    )
+
+    recommendations = output.recommendations[:top_n]
+    # Defensive: ensure each rec has the baseline auto-derived caveats so the
+    # architect always sees a verification list, regardless of what the LLM did.
+    base_caveats = _baseline_caveats(criteria)
+    for rec in recommendations:
+        existing = {c.lower() for c in rec.caveats}
+        for cav in base_caveats:
+            if cav.lower() not in existing:
+                rec.caveats.append(cav)
+
+    return Report(
+        brief=criteria.raw_brief,
+        criteria=criteria,
+        grounded=grounded,
+        recommendations=recommendations,
+        total_products_considered=len(hits),
+    )
+
+
+def _build_user_payload(
+    criteria: CriteriaSpec,
+    grounded: GroundedContext,
+    candidates: list[ProductHit],
+) -> str:
+    candidate_blobs = [
+        {
+            "product_name": h.product_name,
+            "supplier": h.supplier,
+            "market_status": h.market_status,
+            "matches": [
+                {
+                    "query": m.query,
+                    "axis_label": m.axis_label,
+                    "score": round(m.score, 3),
+                }
+                for m in h.matches
+            ],
+        }
+        for h in candidates
+    ]
+    import json
+
+    return (
+        "CRITERIA:\n"
+        + criteria.model_dump_json(indent=2)
+        + "\n\nGROUNDED:\n"
+        + grounded.model_dump_json(indent=2)
+        + "\n\nCANDIDATES (deduplicated, top "
+        + str(len(candidates))
+        + " by best similarity score):\n"
+        + json.dumps(candidate_blobs, indent=2)
+    )
+
+
+def _baseline_caveats(criteria: CriteriaSpec) -> list[str]:
+    items: list[str] = []
+    for cert in criteria.certifications_required:
+        items.append(f"Verify '{cert}' on the manufacturer spec sheet.")
+    for perf in criteria.performance_constraints:
+        items.append(f"Verify '{perf}' is met per the manufacturer spec sheet.")
+    if not items:
+        items.append(
+            "Acelab catalog data does not include product attribute detail. "
+            "Verify all functional and certification requirements on each "
+            "manufacturer's spec sheet before specifying."
+        )
+    return items
