@@ -75,7 +75,7 @@ export function GroundingReview({ initial, onConfirm, onBack }: Props) {
           {initial.certifications.map((cert, i) => (
             <Card key={`cert-${i}`} className={!keepCert[i] ? 'opacity-50' : ''}>
               <CardBody>
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <span className="text-xs text-zinc-500">you said</span>
@@ -122,7 +122,7 @@ export function GroundingReview({ initial, onConfirm, onBack }: Props) {
           {initial.taxonomies.map((t, i) => (
             <Card key={`tax-${i}`} className={!keepTax[i] ? 'opacity-50' : ''}>
               <CardBody>
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <span className="text-xs text-zinc-500">you said</span>
@@ -169,7 +169,7 @@ export function GroundingReview({ initial, onConfirm, onBack }: Props) {
           {initial.brands.map((b, i) => (
             <Card key={`brand-${i}`} className={!keepBrand[i] ? 'opacity-50' : ''}>
               <CardBody>
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <span className="text-xs text-zinc-500">you said</span>

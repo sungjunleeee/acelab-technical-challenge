@@ -9,7 +9,7 @@
 //
 // The user can drop back to idle at any point by clicking "Start over".
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ground,
   rank,
@@ -79,6 +79,14 @@ export default function App() {
     setPhase({ kind: 'idle' })
     setStages(INITIAL_STAGES)
     setSearchProgress(null)
+  }
+
+  function backToCriteria() {
+    if (phase.kind !== 'grounded_review') return
+    // Re-open the Stage 1 editor with the criteria the user already confirmed,
+    // and reset Stage 2's status so the sidebar reflects the rewind.
+    setStage('ground', 'pending')
+    setPhase({ kind: 'criteria_review', criteria: phase.criteria })
   }
 
   async function handleSubmit(brief: string) {
@@ -155,28 +163,60 @@ export default function App() {
     setPhase({ kind: 'error', message })
   }
 
+  // The idle / prompting page is the focal element: no sidebar, search box
+  // vertically centered. As soon as the user submits a brief the sidebar
+  // appears and the layout shifts to a left-rail + main-body view.
+  const isIdle = phase.kind === 'idle'
+
   return (
     <div className="flex min-h-screen bg-zinc-50">
-      <StageSidebar stages={stages} searchProgress={searchProgress} />
-      <main className="flex-1 px-8 py-10">
-        <div className="mx-auto max-w-3xl">
-          <header className="mb-8">
-            <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
-              Material Recommendation Agent
-            </h1>
-            <p className="mt-1 text-sm text-zinc-600">
-              Describe a project, review what the agent understood, then get
-              ranked recommendations grounded in the Acelab catalog.
-            </p>
-          </header>
-          <Body
-            phase={phase}
-            onSubmit={handleSubmit}
-            onConfirmCriteria={handleConfirmCriteria}
-            onConfirmGrounded={handleConfirmGrounded}
-            onReset={reset}
-          />
-        </div>
+      {!isIdle && (
+        <StageSidebar stages={stages} searchProgress={searchProgress} />
+      )}
+      <main className={isIdle ? 'flex flex-1 flex-col' : 'flex-1 px-8 py-10'}>
+        {isIdle ? (
+          <div className="flex flex-1 flex-col items-center justify-center px-4 py-12">
+            <header className="mb-8 text-center">
+              <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">
+                Material Recommendation Agent
+              </h1>
+              <p className="mt-2 text-sm text-zinc-600">
+                Describe a project, review what the agent understood, then get
+                ranked recommendations grounded in the Acelab catalog.
+              </p>
+            </header>
+            <Body
+              phase={phase}
+              onSubmit={handleSubmit}
+              onConfirmCriteria={handleConfirmCriteria}
+              onConfirmGrounded={handleConfirmGrounded}
+              onBackToCriteria={backToCriteria}
+              onReset={reset}
+              searchProgress={searchProgress}
+            />
+          </div>
+        ) : (
+          <div className="mx-auto max-w-3xl">
+            <header className="mb-8">
+              <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
+                Material Recommendation Agent
+              </h1>
+              <p className="mt-1 text-sm text-zinc-600">
+                Describe a project, review what the agent understood, then get
+                ranked recommendations grounded in the Acelab catalog.
+              </p>
+            </header>
+            <Body
+              phase={phase}
+              onSubmit={handleSubmit}
+              onConfirmCriteria={handleConfirmCriteria}
+              onConfirmGrounded={handleConfirmGrounded}
+              onBackToCriteria={backToCriteria}
+              onReset={reset}
+              searchProgress={searchProgress}
+            />
+          </div>
+        )}
       </main>
     </div>
   )
@@ -187,13 +227,21 @@ function Body({
   onSubmit,
   onConfirmCriteria,
   onConfirmGrounded,
+  onBackToCriteria,
   onReset,
+  searchProgress,
 }: {
   phase: Phase
   onSubmit: (brief: string) => void
   onConfirmCriteria: (c: CriteriaSpec) => void
   onConfirmGrounded: (g: GroundedContext) => void
+  onBackToCriteria: () => void
   onReset: () => void
+  searchProgress: {
+    angles: number
+    products: number
+    lastQuery: string | null
+  } | null
 }) {
   if (phase.kind === 'idle') {
     return <SearchBox onSubmit={onSubmit} />
@@ -230,26 +278,17 @@ function Body({
       <GroundingReview
         initial={phase.grounded}
         onConfirm={onConfirmGrounded}
-        onBack={onReset}
+        onBack={onBackToCriteria}
       />
     )
   }
 
   if (phase.kind === 'searching') {
-    return (
-      <RunningPlaceholder>
-        Decomposing your brief into orthogonal product searches. Watch the
-        sidebar for live progress.
-      </RunningPlaceholder>
-    )
+    return <SearchingPanel searchProgress={searchProgress} />
   }
 
   if (phase.kind === 'ranking') {
-    return (
-      <RunningPlaceholder>
-        Synthesizing the final ranked recommendations…
-      </RunningPlaceholder>
-    )
+    return <RankingPanel />
   }
 
   if (phase.kind === 'done') {
@@ -274,6 +313,106 @@ function RunningPlaceholder({ children }: { children: React.ReactNode }) {
     <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white p-5 text-sm text-zinc-700 shadow-sm">
       <Spinner className="text-violet-600" />
       <span>{children}</span>
+    </div>
+  )
+}
+
+function SearchingPanel({
+  searchProgress,
+}: {
+  searchProgress: {
+    angles: number
+    products: number
+    lastQuery: string | null
+  } | null
+}) {
+  const angles = searchProgress?.angles ?? 0
+  const products = searchProgress?.products ?? 0
+  const lastQuery = searchProgress?.lastQuery
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+      <div className="flex items-center gap-3">
+        <Spinner className="text-violet-600" />
+        <h2 className="text-lg font-semibold text-zinc-900">
+          Searching the Acelab catalog
+        </h2>
+      </div>
+      <p className="mt-1 text-sm text-zinc-600">
+        Decomposing your brief into orthogonal product searches across
+        category, performance, certification, and aesthetic axes.
+      </p>
+
+      <div className="mt-5 grid grid-cols-2 gap-3">
+        <Stat label="unique products" value={products} />
+        <Stat label="search-axis matches" value={angles} />
+      </div>
+
+      {lastQuery && (
+        <div className="mt-4 rounded-md border border-zinc-100 bg-zinc-50 px-3 py-2">
+          <div className="text-[11px] font-semibold tracking-wide text-zinc-500 uppercase">
+            current query
+          </div>
+          <div className="mt-0.5 text-sm italic text-zinc-700">{lastQuery}</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-zinc-100 bg-zinc-50 px-3 py-2">
+      <div className="text-2xl font-semibold tabular-nums text-zinc-900">
+        {value}
+      </div>
+      <div className="text-xs text-zinc-500">{label}</div>
+    </div>
+  )
+}
+
+// Stage 4 is one LLM call so we have no real progress signal. A psychological
+// progress bar that asymptotes around 90% over ~12s keeps the user oriented
+// without lying. The remaining 10% only fills when the call actually returns.
+function RankingPanel() {
+  const [pct, setPct] = useState(0)
+  // Easing toward 90% over ~12s. Past 90% we hold and let the actual response
+  // complete the bar by re-rendering as `done`.
+  useEffect(() => {
+    const start = Date.now()
+    const target = 90
+    const durationMs = 12000
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start
+      const t = Math.min(1, elapsed / durationMs)
+      // Ease-out cubic toward target.
+      const next = target * (1 - Math.pow(1 - t, 3))
+      setPct(next)
+      if (t >= 1) clearInterval(id)
+    }, 80)
+    return () => clearInterval(id)
+  }, [])
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+      <div className="flex items-center gap-3">
+        <Spinner className="text-violet-600" />
+        <h2 className="text-lg font-semibold text-zinc-900">
+          Synthesizing recommendations
+        </h2>
+      </div>
+      <p className="mt-1 text-sm text-zinc-600">
+        Ranking candidates against your criteria. The model is producing the
+        final structured response now.
+      </p>
+      <div className="mt-5 h-2 overflow-hidden rounded-full bg-zinc-100">
+        <div
+          className="h-full rounded-full bg-violet-500 transition-[width] duration-300 ease-out"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <div className="mt-2 text-right text-[11px] tabular-nums text-zinc-400">
+        {Math.round(pct)}%
+      </div>
     </div>
   )
 }
