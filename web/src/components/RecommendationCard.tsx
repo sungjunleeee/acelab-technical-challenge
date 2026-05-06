@@ -16,12 +16,54 @@ import {
   AlertCircle,
   Box,
 } from 'lucide-react'
-import type { ComponentType } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import type { Recommendation } from '../lib/types'
 import { Badge, Card, FitScoreBadge } from './ui'
 
 type Props = {
   rec: Recommendation
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// Highlights key terms in `why_it_fits` so the eye lands on what matters:
+// the axis labels the product matched, similarity scores, MasterFormat codes,
+// supplier name, and the "Live on Acelab" status string. Pure regex split,
+// no innerHTML, no XSS surface.
+function highlightWhyItFits(
+  text: string,
+  matchedAxes: string[],
+  supplier: string | null,
+): ReactNode[] {
+  // Literal patterns. Sort longest first so e.g. "category: flooring" matches
+  // before plain "flooring" leaks through and creates partial overlaps.
+  const literals = [...matchedAxes]
+  if (supplier) literals.push(supplier)
+  literals.push('Live on Acelab')
+  literals.sort((a, b) => b.length - a.length)
+
+  const literalPattern = literals.map(escapeRegex).join('|')
+  // Decimal similarity scores (0.83), integer percentages (83%),
+  // MasterFormat-style codes (09 65 00).
+  const dynamicPattern =
+    String.raw`\b\d{1,3}%|\b[01]\.\d{1,3}\b|\b\d{2}\s\d{2}\s\d{2}\b`
+  const combined = literalPattern
+    ? `${literalPattern}|${dynamicPattern}`
+    : dynamicPattern
+  const re = new RegExp(`(${combined})`, 'g')
+
+  const parts = text.split(re)
+  return parts.map((p, i) =>
+    i % 2 === 1 ? (
+      <strong key={i} className="font-semibold text-zinc-900">
+        {p}
+      </strong>
+    ) : (
+      p
+    ),
+  )
 }
 
 function pickIcon(matchedAxes: string[]): ComponentType<{ className?: string }> {
@@ -94,7 +136,13 @@ export function RecommendationCard({ rec }: Props) {
               <div className="mb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
                 Why it fits
               </div>
-              <p className="text-zinc-800">{rec.why_it_fits}</p>
+              <p className="text-zinc-800">
+                {highlightWhyItFits(
+                  rec.why_it_fits,
+                  rec.matched_axes,
+                  rec.supplier,
+                )}
+              </p>
             </div>
 
             {rec.matched_axes.length > 0 && (
