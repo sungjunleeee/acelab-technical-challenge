@@ -1,6 +1,6 @@
 # Material Recommendation Agent
 
-A CLI agent that turns a free-text architect brief into ranked, grounded material recommendations against the Acelab catalog.
+A material recommendation agent that turns a free-text architect brief into ranked, grounded recommendations against the Acelab catalog. Available as a CLI (the original deliverable, on `main`) and a web UI (`frontend` branch, this branch).
 
 ## Brief (the take-home prompt)
 
@@ -14,17 +14,20 @@ The full original prompt is preserved in git history (`6ce1480 chore: take-home 
 
 ## Quickstart
 
-Prereqs: Python 3.12+, [uv](https://docs.astral.sh/uv/).
+Prereqs: Python 3.12+, [uv](https://docs.astral.sh/uv/), Node 20+ (for the web UI only).
 
 ```bash
 # 1. Create .env with the three required keys (see .env.example)
 cp .env.example .env
 #    Then fill in: OPENROUTER_API_KEY, ACELAB_API_KEY, ACELAB_BASE_URL
 
-# 2. Install
+# 2. Install backend
 uv sync
+```
 
-# 3. Run
+### Option A: CLI (no Node required)
+
+```bash
 uv run python -m src.cli "High-traffic hospital corridor that needs to meet infection control standards, LEED Silver minimum, and a calming aesthetic. Budget is mid-range."
 ```
 
@@ -35,6 +38,26 @@ uv run python -m src.cli "..." --json > report.json
 ```
 
 Stage progress is streamed to stderr while results go to stdout, so `--json` output stays clean for piping.
+
+### Option B: Web UI
+
+Two terminals:
+
+```bash
+# Terminal 1: FastAPI backend on port 8000
+uv run uvicorn src.api:app --reload
+
+# Terminal 2: Vite dev server on port 5173
+cd web
+npm install   # ~30s, one time
+npm run dev
+```
+
+Then open http://localhost:5173. Vite proxies `/api/*` to the backend, so no CORS setup is needed for local dev.
+
+The web UI walks through every stage with editable checkpoints: Stage 1 chips (with checked-extracted plus unchecked-suggested options and typo-validated custom adds), Stage 2 cert/taxonomy/brand confirmations with confidence badges, a live progress sidebar during search, and collapsible recommendation cards with color-coded fit scores.
+
+### Notes
 
 The optional `MODEL` env var overrides the default LLM (`anthropic/claude-sonnet-4.6`) for any OpenRouter-supported model.
 
@@ -131,6 +154,8 @@ Every recommendation comes with verification caveats. The Stage 4 prompt explici
 | `src/render.py` | `Report` to markdown (deterministic, pure function). |
 | `src/agent.py` | Stage-level API plus `run_agent()` convenience wrapper plus event emission. |
 | `src/cli.py` | `python -m src.cli "<brief>" [--json]` entry point. |
+| `src/api.py` | FastAPI HTTP layer. Mirrors the stage-level API with SSE for live `SearchProgress` events. |
+| `web/` | React + TypeScript + Vite + Tailwind v4 web UI. Calls the FastAPI backend; proxies `/api` during dev. |
 | `tests/` | Validation set (`validation_set.py`, 10 `BriefCase`s spanning content and input-quality axes), per-stage unit tests with hand-written mocks (`test_stages.py`, runs in under 1s on every save), and live-API e2e tests behind the `pytest -m e2e` marker, including a hallucination audit that fails when `why_it_fits` makes un-corroborated cert claims. |
 | `examples/basic_usage.py` | Original Acelab SDK smoke test (verifies env wiring). |
 | `examples/probe.py` | Diagnostic probe of all SDK endpoints on the README's hospital-corridor brief. Informed Stage 2's similarity thresholds and the decision **not** to enrich with `materials.notes` (the field came back empty). |
@@ -169,7 +194,7 @@ sequenceDiagram
 ## What I would improve with more time
 
 - **`--verify-top-3` flag** using `:online` web search to verify cert claims on the top 3 picks only. Kept off the v1 critical path so latency and rubric framing stay clean, but it's the natural next add-on for an architect who wants extra confidence before specifying.
-- **React/TypeScript web UI on top of the stage-level API.** Search-bar input, then editable keyword chips after Stage 1, then checkbox grid for cert canonicalizations after Stage 2, then live progress sidebar during Stage 3, then collapsible recommendation cards for Stage 4. The agent layer is already shaped for this; it's a new entry point, not a refactor.
+- **Persistent run history** in the web UI. Right now each search starts from a clean slate; storing recent runs in localStorage (or behind a SQLite cache on the backend) would let architects compare alternatives or revisit a run.
 - **LLM-judge cert canonicalization.** Today's threshold-based grounding occasionally lets semantically related but factually different certs through (e.g. "ASTM E84 Class A" resolves to "E108-20a (Class A)", which is a different test). A second-pass LLM judge with a clear "is X the same standard as Y?" prompt would catch these.
 - **Cached SDK responses for deterministic e2e tests.** The 21-test `pytest -m e2e` suite currently hits live APIs and burns LLM credits per run. Recording the SDK responses per `BriefCase` once (and the LLM responses behind a deterministic seed) would make hallucination audits and prompt-regression checks CI-friendly.
 - **Sharper Stage 1 axis taxonomy.** "no PVC" is currently tagged as a performance constraint when it's arguably a material exclusion. A separate `material_exclusions[]` axis (or a tighter prompt with negative examples) would give Stage 3 a cleaner signal to filter against rather than search for.

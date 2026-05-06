@@ -22,6 +22,10 @@ from pydantic import BaseModel
 T = TypeVar("T", bound=BaseModel)
 
 DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
+# Stage 4 (ranking) is a structured-output call against a clear schema. It's
+# more mechanical than the reasoning-heavy Stage 1 and Stage 3 work, so we
+# default to a faster model. Env override via RANK_MODEL for evaluation.
+DEFAULT_RANK_MODEL = "anthropic/claude-haiku-4.5"
 
 
 def _client() -> AsyncOpenAI:
@@ -33,6 +37,10 @@ def _client() -> AsyncOpenAI:
 
 def default_model() -> str:
     return os.environ.get("MODEL", DEFAULT_MODEL)
+
+
+def default_rank_model() -> str:
+    return os.environ.get("RANK_MODEL", DEFAULT_RANK_MODEL)
 
 
 # ---------------------------------------------------------------------------
