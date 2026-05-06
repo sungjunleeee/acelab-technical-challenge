@@ -99,11 +99,14 @@ class RankIn(BaseModel):
     criteria: CriteriaSpec
     grounded: GroundedContext
     hits: list[ProductHit]
+    top_n: int | None = None
 
 
 @app.post("/api/rank", response_model=Report)
 async def api_rank(req: RankIn) -> Report:
     """Stage 4: rank hits and produce the final Report."""
+    if req.top_n is not None:
+        return await rank(req.criteria, req.grounded, req.hits, top_n=req.top_n)
     return await rank(req.criteria, req.grounded, req.hits)
 
 
