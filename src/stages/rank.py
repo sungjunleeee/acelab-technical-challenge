@@ -13,9 +13,11 @@ the LLM produces.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
-from src.llm import structured_completion
+from src.llm import default_rank_model, structured_completion
 from src.schemas import (
     CriteriaSpec,
     GroundedContext,
@@ -24,8 +26,17 @@ from src.schemas import (
     Report,
 )
 
-TOP_PRODUCTS_TO_CONSIDER = 30
+# Pre-filter the candidate pool sent to the ranker. 20 is enough to give the
+# LLM real choice while keeping prompt + completion small (Stage 4 is the
+# slowest single LLM call in the pipeline; latency scales roughly linearly
+# with input + output tokens).
+TOP_PRODUCTS_TO_CONSIDER = 20
 DEFAULT_TOP_N = 8
+
+# Dedupe per-product matches before sending to the ranker. Many products are
+# hit by multiple near-duplicate queries; the LLM only needs the distinct
+# (axis, score) signal, not every individual query string.
+MAX_MATCHES_PER_PRODUCT = 4
 
 
 class _RankedOutput(BaseModel):
@@ -114,6 +125,7 @@ async def rank(
             {"role": "user", "content": user_payload},
         ],
         response_model=_RankedOutput,
+        model=default_rank_model(),
         temperature=0.2,
     )
 
@@ -145,22 +157,30 @@ def _build_user_payload(
     viable_count = sum(
         1 for h in candidates if any(m.score >= 0.65 for m in h.matches)
     )
-    candidate_blobs = [
-        {
-            "product_name": h.product_name,
-            "supplier": h.supplier,
-            "market_status": h.market_status,
-            "matches": [
-                {
-                    "query": m.query,
-                    "axis_label": m.axis_label,
-                    "score": round(m.score, 3),
-                }
-                for m in h.matches
-            ],
-        }
-        for h in candidates
-    ]
+    candidate_blobs = []
+    for h in candidates:
+        # Keep at most MAX_MATCHES_PER_PRODUCT, deduped by axis_label and
+        # sorted by score descending. The ranker doesn't need the full query
+        # string for every match; the axis label is what's load-bearing.
+        seen_axes: set[str] = set()
+        compact: list[dict[str, Any]] = []
+        for m in sorted(h.matches, key=lambda x: x.score, reverse=True):
+            if m.axis_label in seen_axes:
+                continue
+            seen_axes.add(m.axis_label)
+            compact.append(
+                {"axis": m.axis_label, "score": round(m.score, 2)}
+            )
+            if len(compact) >= MAX_MATCHES_PER_PRODUCT:
+                break
+        candidate_blobs.append(
+            {
+                "name": h.product_name,
+                "supplier": h.supplier,
+                "status": h.market_status,
+                "matches": compact,
+            }
+        )
     import json
 
     return (

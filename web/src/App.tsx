@@ -370,25 +370,45 @@ function Stat({ label, value }: { label: string; value: number }) {
   )
 }
 
-// Stage 4 is one LLM call so we have no real progress signal. A psychological
-// progress bar that asymptotes around 90% over ~12s keeps the user oriented
-// without lying. The remaining 10% only fills when the call actually returns.
+// Stage 4 is one LLM call (typically 20 to 30 seconds for the rank step) so
+// there's no real progress signal to stream. We show a psychological bar
+// that eases toward 95% over the median observed time, plus a rotating
+// status line so the user sees the page is alive. The bar completes when
+// the request actually returns.
+const RANKING_STATUS_LINES = [
+  'Reviewing the candidate pool against your criteria…',
+  'Cross-referencing match provenance with your axis priorities…',
+  'Drafting why-it-fits explanations…',
+  'Compiling spec-sheet verification caveats…',
+  'Finalizing the ranked list…',
+]
+// Median observed wall time for the rank stage with the Haiku 4.5 default
+// (Sonnet 4.6 takes ~30s, Haiku ~15s). Bar eases toward 95% over this window
+// then holds; the actual response completes the transition.
+const RANKING_EXPECTED_MS = 14000
+
 function RankingPanel() {
   const [pct, setPct] = useState(0)
-  // Easing toward 90% over ~12s. Past 90% we hold and let the actual response
-  // complete the bar by re-rendering as `done`.
+  const [statusIdx, setStatusIdx] = useState(0)
+
   useEffect(() => {
     const start = Date.now()
-    const target = 90
-    const durationMs = 12000
+    const target = 95
     const id = setInterval(() => {
       const elapsed = Date.now() - start
-      const t = Math.min(1, elapsed / durationMs)
+      const t = Math.min(1, elapsed / RANKING_EXPECTED_MS)
       // Ease-out cubic toward target.
       const next = target * (1 - Math.pow(1 - t, 3))
       setPct(next)
       if (t >= 1) clearInterval(id)
-    }, 80)
+    }, 100)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setStatusIdx((i) => (i + 1) % RANKING_STATUS_LINES.length)
+    }, 4500)
     return () => clearInterval(id)
   }, [])
 
@@ -400,18 +420,18 @@ function RankingPanel() {
           Synthesizing recommendations
         </h2>
       </div>
-      <p className="mt-1 text-sm text-zinc-600">
-        Ranking candidates against your criteria. The model is producing the
-        final structured response now.
+      <p className="mt-1 min-h-[1.25rem] text-sm text-zinc-600 transition-opacity">
+        {RANKING_STATUS_LINES[statusIdx]}
       </p>
       <div className="mt-5 h-2 overflow-hidden rounded-full bg-zinc-100">
         <div
-          className="h-full rounded-full bg-violet-500 transition-[width] duration-300 ease-out"
+          className="h-full rounded-full bg-violet-500 transition-[width] duration-200 ease-out"
           style={{ width: `${pct}%` }}
         />
       </div>
-      <div className="mt-2 text-right text-[11px] tabular-nums text-zinc-400">
-        {Math.round(pct)}%
+      <div className="mt-2 flex items-center justify-between text-[11px] tabular-nums text-zinc-400">
+        <span>typically 12-18 seconds</span>
+        <span>{Math.round(pct)}%</span>
       </div>
     </div>
   )
