@@ -58,26 +58,28 @@ THE INPUT CONTAINS, AND ONLY CONTAINS:
 THE INPUT DOES NOT CONTAIN PRODUCT-LEVEL ATTRIBUTES. The Acelab API returns no per-product certifications, materials, ratings, dimensions, sustainability data, slip ratings, or composition info.
 
 THEREFORE, `why_it_fits` MUST cite ONLY:
-- Which axes of the CriteriaSpec the product matched (from the QueryMatch axis labels).
-- The similarity scores of those matches.
-- The supplier name and `market_status` (e.g. "Live on Acelab" indicates the supplier is currently published in the catalog).
+- Which axes of the CriteriaSpec the product matched, by name (from the QueryMatch axis labels). The numeric similarity scores in the input are an internal embedding signal, not a confidence percentage. Express your overall judgment in `fit_score`; do NOT inline raw scores like "0.81 match" or "81%" inside `why_it_fits` text, since readers misread those numbers as quality guarantees.
+- The supplier name and the product's `status` field. The values you will see are the catalog's lifecycle marker, typically "Current Product" or "Recently Updated". Do NOT paraphrase this as "Live on Acelab", "verified", or "certified"; it only conveys SKU freshness in the catalog, nothing about quality or compliance.
 - Canonical MasterFormat code or taxonomy label from GroundedContext when applicable.
 
 `why_it_fits` MUST NOT:
 - Claim the product is "certified" / "rated" / "compliant" with any standard. The API never returned that. Even if the product NAME suggests it (e.g. "BioSpec" sounds like it might be antimicrobial), do not assert it. The architect verifies on the manufacturer spec sheet.
 - Invent material composition, specs, dimensions, performance ratings, or sustainability attributes.
 - Use marketing language ("premium", "industry-leading"). Stick to facts the input supports.
+- Surface raw similarity scores or percentages in the prose. Use the score to inform `fit_score`, not to decorate the explanation.
 
 ALLOWED PHRASING EXAMPLES:
-- "Surfaced for 'category: flooring' (0.81) and 'performance: infection control' (0.76). Supplier Mannington Commercial is Live on Acelab."
-- "Highest match for the calming aesthetic axis (0.83). Categorized under MasterFormat 09 65 00 Resilient Flooring per grounding."
-- "Matches three axes: category: wall protection (0.80), category: ceiling (0.78), and synthesis: hospital corridor (0.75)."
+- "Surfaced for the category: flooring and performance: infection control axes. Supplier Mannington Commercial; current product in the catalog."
+- "Strongest match on the calming aesthetic axis. Categorized under MasterFormat 09 65 00 Resilient Flooring per grounding."
+- "Matches three axes: category: wall protection, category: ceiling, and synthesis: hospital corridor."
 
-FORBIDDEN PHRASING EXAMPLES (these would be hallucinations):
+FORBIDDEN PHRASING EXAMPLES (these would be hallucinations or misleading):
 - "GREENGUARD Gold certified" (not in the input).
 - "Antimicrobial coating" (speculation from the product name).
 - "Meets ASTM E84 Class A" (never asserted by the API).
 - "Low-VOC compliant" (even if the user asked for low-VOC, we don't know the product satisfies it).
+- "92% match" or "0.83 confidence" (the similarity score is an embedding signal, not a confidence rating).
+- "Live on Acelab" or "verified supplier" (paraphrasing the `status` field beyond what it literally says).
 
 RANKING (read this carefully):
 - Return EXACTLY {top_n} recommendations. The candidate pool you receive has been pre-filtered to be reasonable choices, so under-returning means leaving good options on the table.

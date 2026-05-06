@@ -99,10 +99,12 @@ The recommendation reasoning is grounded **only** in:
 
 1. Which decomposed queries surfaced the product, with their similarity scores.
 2. The `CriteriaSpec` axes those queries derived from (the `axis_label` from Stage 3).
-3. Supplier `status_name` (e.g. "Live on Acelab") from companies enrichment.
+3. The product's `market_status` from the catalog (real values are `"Current Product"` or `"Recently Updated"`, a freshness marker; not a quality or compliance signal). Validated by `examples/probe_market_status.py`.
 4. Taxonomy classification of the product's apparent category.
 
 Every `Recommendation` ships with a `caveats[]` list that explicitly enumerates what the architect must verify on the manufacturer spec sheet. Stage 4's system prompt forbids attribute claims and includes negative examples ("not GREENGUARD Gold certified", etc.). Honesty over impressiveness.
+
+**Advisory fields, not filters.** Three single-value `CriteriaSpec` fields (`space_type`, `traffic_level`, `budget_tier`) have no matching catalog attribute on the SDK side. There is no price field, no traffic rating, no space-type filter exposed by `client.search`. These signals surface in the Stage 3 and Stage 4 prompts as context so the LLM can bias query phrasing or break ties, but they never reach a deterministic filter and the agent cannot verify any returned product actually satisfies them. `budget_tier` is the leakiest of the three: a brief mentioning "luxury" produces `budget_tier: "luxury"`, yet nothing downstream can confirm price tier. Treat them as UI display, not constraint enforcement.
 
 ### No web-search models for v1
 

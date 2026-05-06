@@ -121,7 +121,7 @@ def _company_response(name: str, score: float) -> CompanySearchResponse:
         results=[
             CompanySearchResult(
                 id="co", name=name, website="https://example.com",
-                status_name="Live on Acelab", similarity_score=score,
+                status_name="Published/Live on Acelab", similarity_score=score,
             )
         ],
         query=name, total_results=1, top_k=1,
