@@ -1,6 +1,6 @@
 # Material Recommendation Agent
 
-A material recommendation agent that turns a free-text architect brief into ranked, grounded recommendations against the Acelab catalog. Available as a CLI (the original deliverable, on `main`) and a web UI (`frontend` branch, this branch).
+An AI agent that turns a free-text architect brief into ranked, grounded material recommendations against the Acelab catalog. Ships as a CLI (the core deliverable) with an optional React web UI layered on top.
 
 ## Brief (the take-home prompt)
 
@@ -14,52 +14,43 @@ The full original prompt is preserved in git history (`6ce1480 chore: take-home 
 
 ## Quickstart
 
-Prereqs: Python 3.12+, [uv](https://docs.astral.sh/uv/), Node 20+ (for the web UI only).
+Prereqs: Python 3.12+, [uv](https://docs.astral.sh/uv/). Node 20+ only if you want to try the optional web UI.
 
 ```bash
 # 1. Create .env with the three required keys (see .env.example)
 cp .env.example .env
 #    Then fill in: OPENROUTER_API_KEY, ACELAB_API_KEY, ACELAB_BASE_URL
 
-# 2. Install backend
+# 2. Install
 uv sync
-```
 
-### Option A: CLI (no Node required)
-
-```bash
+# 3. Run the CLI
 uv run python -m src.cli "High-traffic hospital corridor that needs to meet infection control standards, LEED Silver minimum, and a calming aesthetic. Budget is mid-range."
 ```
 
-Output is markdown by default. Pass `--json` to dump the full structured `Report` (parseable for grading or piping into another tool):
+Output is markdown by default. Pass `--json` to dump the full structured `Report`:
 
 ```bash
 uv run python -m src.cli "..." --json > report.json
 ```
 
-Stage progress is streamed to stderr while results go to stdout, so `--json` output stays clean for piping.
+Stage progress streams to stderr while results go to stdout, so `--json` stays clean for piping.
 
-### Option B: Web UI
+The optional `MODEL` env var overrides the default LLM (`anthropic/claude-sonnet-4.6`) for any OpenRouter-supported model. `RANK_MODEL` overrides Stage 4 specifically (default `anthropic/claude-haiku-4.5` for speed).
 
-Two terminals:
+### Optional: web UI
+
+A React web UI lives in `web/`. It's an addition to the CLI core, not the rubric-relevant deliverable, but it demonstrates the stage-level API by letting the user edit the agent's interpretation between stages.
 
 ```bash
-# Terminal 1: FastAPI backend on port 8000
-uv run uvicorn src.api:app --reload
+# Terminal 1
+uv run uvicorn src.api:app --reload    # FastAPI on :8000
 
-# Terminal 2: Vite dev server on port 5173
-cd web
-npm install   # ~30s, one time
-npm run dev
+# Terminal 2
+cd web && npm install && npm run dev   # Vite on :5173
 ```
 
-Then open http://localhost:5173. Vite proxies `/api/*` to the backend, so no CORS setup is needed for local dev.
-
-The web UI walks through every stage with editable checkpoints: Stage 1 chips (with checked-extracted plus unchecked-suggested options and typo-validated custom adds), Stage 2 cert/taxonomy/brand confirmations with confidence badges, a live progress sidebar during search, and collapsible recommendation cards with color-coded fit scores.
-
-### Notes
-
-The optional `MODEL` env var overrides the default LLM (`anthropic/claude-sonnet-4.6`) for any OpenRouter-supported model.
+Then open http://localhost:5173. Vite proxies `/api/*` to the backend so no CORS setup is needed.
 
 ## Approach
 
@@ -68,15 +59,15 @@ A **4-stage hybrid pipeline**: a deterministic shell around an autonomous LLM to
 ```mermaid
 flowchart TD
     A[brief] --> B["Stage 1 UNDERSTAND<br/>LLM, structured output"]
-    B --> C["CriteriaSpec<br/><i>space, certs, perf, aesthetics, categories, brands</i>"]
+    B --> C["CriteriaSpec<br/><i>space, certs, perf, aesthetics, categories, brands<br/>+ suggested_additions per axis</i>"]
     C --> D["Stage 2 GROUND<br/>async fan-out, no LLM"]
     D --> E["GroundedContext<br/><i>canonical certs, MasterFormat codes, verified brands</i>"]
     E --> F["Stage 3 SEARCH<br/>LLM tool-calling loop, &le;8 iterations"]
     F --> G["list of ProductHit<br/><i>each hit carries match provenance</i>"]
-    G --> H["Stage 4 RANK<br/>LLM, structured output"]
+    G --> H["Stage 4 RANK<br/>LLM, structured output (Haiku 4.5 by default)"]
     H --> I["Report<br/><i>top-8 Recommendations, grounded why_it_fits, caveats</i>"]
     I --> J["Stage 5 RENDER<br/>pure function"]
-    J --> K[markdown / JSON]
+    J --> K[markdown / JSON / web]
 
     classDef llm fill:#e1f5ff,stroke:#0277bd,color:#01579b
     classDef pure fill:#f1f8e9,stroke:#558b2f,color:#33691e
@@ -86,19 +77,19 @@ flowchart TD
     class C,E,G,I data
 ```
 
-**Stage 1 Understand.** A single structured-output LLM call parses the brief into a `CriteriaSpec`: space type, traffic level, budget tier, plus arrays for performance constraints, certifications required, aesthetic qualities, material categories, and branded preferences. Jargon (`IIC > 50`, `ASTM E84 Class A`) is preserved verbatim so Stage 2 can canonicalize it; silently dropping acronyms is the failure mode here. Architects aren't prompt engineers; the brief might be terse, vague, or RFP-prose.
+**Stage 1 Understand.** A single structured-output LLM call parses the brief into a `CriteriaSpec`: space type, traffic level, budget tier, plus arrays for performance constraints, certifications required, aesthetic qualities, material categories, and branded preferences. Jargon (`IIC > 50`, `ASTM E84 Class A`) is preserved verbatim so Stage 2 can canonicalize it; silently dropping acronyms is the failure mode here. The same call also emits `suggested_additions` per axis (the web UI surfaces these as unchecked checkboxes).
 
-**Stage 2 Ground.** Deterministic parallel fan-out (no LLM): each criterion is looked up against the appropriate Acelab reference endpoint via `asyncio.gather`. Cert phrases hit `certifications.search`, categories hit `taxonomy.search` (yielding MasterFormat codes like `09 65 16`), brands hit `companies.search` with a name-substring sanity check (the embedding endpoint will happily return `"Object Carpet"` for `"Interface"`). Empirical similarity thresholds (derived from `examples/probe.py`) keep noisy near-misses from contaminating Stage 3's prompt. The grounded context becomes the canonical vocabulary downstream.
+**Stage 2 Ground.** Deterministic parallel fan-out (no LLM): each criterion is looked up against the appropriate Acelab reference endpoint via `asyncio.gather`. Cert phrases hit `certifications.search`, categories hit `taxonomy.search` (yielding MasterFormat codes like `09 65 16`), brands hit `companies.search` with a name-substring sanity check (the embedding endpoint will happily return `"Object Carpet"` for `"Interface"`). Empirical similarity thresholds derived from `examples/probe.py` keep noisy near-misses from contaminating Stage 3's prompt.
 
 **Stage 3 Search.** An autonomous LLM tool-calling loop (≤8 iterations, ~12 calls) with three tools: `search_products`, `search_companies`, and `finish_searches`. The system prompt seeds with the `CriteriaSpec` plus `GroundedContext` and instructs decomposition along `{category × use-case × constraint}` axes. **Every** `search_products` call must carry an `axis_label` argument naming which `CriteriaSpec` axis the query derives from. That axis label is what gives every product hit its provenance trail (which queries surfaced it, at what score, for what reason). When the same product is hit by multiple queries, the entries accumulate. Stage 4 reasons over that provenance.
 
-**Stage 4 Rank & Explain.** A single structured-output LLM call takes the `CriteriaSpec` plus `GroundedContext` plus top-30 deduplicated `ProductHit`s and emits ranked `Recommendation`s. The prompt is the load-bearing hallucination guard: the LLM is instructed to cite matched axes and scores from the provenance data, **not** to claim certifications, materials, or specs the SDK never returned. A baseline `caveats[]` list is auto-derived from the brief so the architect always sees what to verify off-platform, even if the LLM forgets to add anything.
+**Stage 4 Rank & Explain.** A single structured-output LLM call takes the `CriteriaSpec` plus `GroundedContext` plus the top-20 deduplicated `ProductHit`s and emits ranked `Recommendation`s. The prompt is the load-bearing hallucination guard: the LLM cites matched axes and scores from the provenance data, never claims certifications, materials, or specs the SDK didn't return. Defaults to Haiku 4.5 (~15s) since the work is structured-output rather than reasoning; Sonnet handles Stages 1 and 3 where planning matters more. A baseline `caveats[]` list is auto-derived from the brief so the architect always sees what to verify off-platform.
 
 ## Key design decisions
 
 ### Hybrid pipeline over pure tool-calling
 
-Pure tool-calling lets the model wander and skips grounding. A pure pipeline doesn't demonstrate the multi-step reasoning the rubric grades. Bookending one autonomous loop (Stage 3) with three deterministic stages gets both: the structured stages keep the run reproducible and explainable, while Stage 3 still demonstrates real decomposition. The stage boundaries are also where a future UI inserts user edits cheaply (more on that below).
+Pure tool-calling lets the model wander and skips grounding. A pure pipeline doesn't demonstrate the multi-step reasoning the rubric grades. Bookending one autonomous loop (Stage 3) with three deterministic stages gets both: the structured stages keep the run reproducible and explainable, while Stage 3 still demonstrates real decomposition. The stage boundaries are also where the web UI inserts user edits cheaply.
 
 ### Match-provenance grounding for `why_it_fits`
 
@@ -123,7 +114,7 @@ OpenRouter `:online` and Perplexity sonar variants would let the model verify ce
 
 Kept as a stretch flag (`--verify-top-3`), not a v1 dependency.
 
-### Stage-level API plus event stream for forward compatibility
+### Stage-level API plus event stream
 
 Each stage is a plain typed async function:
 
@@ -134,11 +125,15 @@ async def search(criteria, grounded, on_event=None) -> list[ProductHit]
 async def rank(criteria, grounded, hits) -> Report
 ```
 
-`run_agent()` is a 20-line wrapper that chains them and emits `AgentEvent`s. A future UI (e.g. a "search-bar" web app) can call the stages individually, interpose user edits between any two (editable keyword chips after Stage 1, cert-canonicalization checkboxes after Stage 2), and consume the same event stream for a live progress view, with no agent refactor needed. Interruption is free: the UI just doesn't call the next stage until the user clicks Continue.
+`run_agent()` is a thin wrapper that chains them and emits `AgentEvent`s. The CLI uses the wrapper. The web UI calls each stage individually and interposes user edits between them (Stage 1 keyword chips, Stage 2 cert/taxonomy/brand confirmations), consuming the same event stream for a live progress sidebar. The agent layer was unchanged when the web UI was added.
 
 ### Honesty over impressiveness
 
 Every recommendation comes with verification caveats. The Stage 4 prompt explicitly forbids attribute claims it can't ground in the API response. A recommendation that admits "this product surfaced for queries derived from your *infection-control* and *flooring* axes; verify GREENGUARD Gold and antimicrobial coating on the manufacturer spec sheet" is more useful to an architect than one that confidently invents certifications.
+
+### Top 8 by default
+
+Eight recommendations is the working sweet spot: more than ten causes scrolling fatigue, fewer than five feels under-served. Stage 4's prompt enforces "return exactly N unless the candidate pool literally has fewer than N viable products" with the candidate-pool stats injected into the user payload so the LLM can mechanically check whether under-returning is permitted.
 
 ## Repository tour
 
@@ -151,15 +146,14 @@ Every recommendation comes with verification caveats. The Stage 4 prompt explici
 | `src/stages/ground.py` | Stage 2: parallel fan-out to `certifications`, `taxonomy`, `companies` (no LLM). |
 | `src/stages/search.py` | Stage 3: autonomous tool-calling loop with provenance tracking. |
 | `src/stages/rank.py` | Stage 4: ranked recommendations with grounded `why_it_fits`. |
+| `src/agent.py` | Stage-level API + `run_agent()` convenience wrapper + event emission. |
 | `src/render.py` | `Report` to markdown (deterministic, pure function). |
-| `src/agent.py` | Stage-level API plus `run_agent()` convenience wrapper plus event emission. |
 | `src/cli.py` | `python -m src.cli "<brief>" [--json]` entry point. |
-| `src/api.py` | FastAPI HTTP layer. Mirrors the stage-level API with SSE for live `SearchProgress` events. |
-| `web/` | React + TypeScript + Vite + Tailwind v4 web UI. Calls the FastAPI backend; proxies `/api` during dev. |
-| `tests/` | Validation set (`validation_set.py`, 10 `BriefCase`s spanning content and input-quality axes), per-stage unit tests with hand-written mocks (`test_stages.py`, runs in under 1s on every save), and live-API e2e tests behind the `pytest -m e2e` marker, including a hallucination audit that fails when `why_it_fits` makes un-corroborated cert claims. |
+| `src/api.py` | Optional FastAPI HTTP layer with SSE for the web UI. Mirrors the stage-level API. |
+| `web/` | Optional React + TypeScript + Vite + Tailwind v4 web UI. Calls the FastAPI backend; proxies `/api` during dev. |
+| `tests/` | Validation set (10 `BriefCase`s spanning content + input-quality axes), per-stage unit tests + FastAPI endpoint tests with hand-written mocks (`pytest tests/test_stages.py tests/test_api.py`, runs in under 1s on every save), and live-API e2e tests behind the `pytest -m e2e` marker including a hallucination audit. |
 | `examples/basic_usage.py` | Original Acelab SDK smoke test (verifies env wiring). |
-| `examples/probe.py` | Diagnostic probe of all SDK endpoints on the README's hospital-corridor brief. Informed Stage 2's similarity thresholds and the decision **not** to enrich with `materials.notes` (the field came back empty). |
-| `examples/probe_companies.py` | Follow-up probe confirming `companies.search` is name-based, not description-based: the reason Stage 2 sanity-checks brand resolutions by substring. |
+| `examples/probe.py`, `probe_companies.py` | Diagnostic SDK probes that informed the architecture (Stage 2 thresholds, decision not to enrich with `materials.notes`, brand-search name-substring sanity check). |
 
 ## Pipeline at a glance
 
@@ -186,9 +180,9 @@ sequenceDiagram
         S-->>A: results with similarity scores
         A->>A: accumulate ProductHit + QueryMatch provenance
     end
-    A->>L: rank top-30 with criteria + grounded context
+    A->>L: rank top-20 with criteria + grounded context
     L-->>A: ranked Recommendations + caveats
-    A-->>U: Report (markdown or JSON)
+    A-->>U: Report (markdown / JSON / web)
 ```
 
 ## What I would improve with more time
