@@ -143,6 +143,9 @@ def _setenv(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_understand_returns_criteriaspec_with_raw_brief() -> None:
+    from src.stages.understand import _ExtractedSuggestions
+    from src.schemas import SuggestedAdditions
+
     extracted = _Extracted(
         space_type="hospital corridor",
         traffic_level="high",
@@ -151,6 +154,12 @@ async def test_understand_returns_criteriaspec_with_raw_brief() -> None:
         certifications_required=["LEED Silver"],
         aesthetic_qualities=["calming"],
         material_categories=["flooring"],
+        suggested_additions=_ExtractedSuggestions(
+            performance_constraints=["slip resistance"],
+            certifications_required=["GREENGUARD Gold", "FloorScore"],
+            aesthetic_qualities=["biophilic"],
+            material_categories=["wall protection", "ceiling tile"],
+        ),
     )
     with patch(
         "src.stages.understand.structured_completion",
@@ -162,6 +171,37 @@ async def test_understand_returns_criteriaspec_with_raw_brief() -> None:
     assert spec.space_type == "hospital corridor"
     assert spec.material_categories == ["flooring"]
     assert spec.certifications_required == ["LEED Silver"]
+    # suggested_additions should round-trip to the public SuggestedAdditions
+    # type, populated from the LLM-mocked sub-schema. The UI surfaces these
+    # as unchecked checkboxes so the user can opt in.
+    assert isinstance(spec.suggested_additions, SuggestedAdditions)
+    assert spec.suggested_additions.performance_constraints == ["slip resistance"]
+    assert spec.suggested_additions.certifications_required == [
+        "GREENGUARD Gold",
+        "FloorScore",
+    ]
+    assert spec.suggested_additions.material_categories == [
+        "wall protection",
+        "ceiling tile",
+    ]
+
+
+async def test_understand_handles_empty_suggestions() -> None:
+    """Sparse briefs may produce an LLM result with empty suggestion lists."""
+    extracted = _Extracted(
+        space_type="bathroom",
+        material_categories=["flooring"],
+    )
+    with patch(
+        "src.stages.understand.structured_completion",
+        new=AsyncMock(return_value=extracted),
+    ):
+        spec = await understand("a bathroom")
+
+    assert spec.suggested_additions.performance_constraints == []
+    assert spec.suggested_additions.certifications_required == []
+    assert spec.suggested_additions.aesthetic_qualities == []
+    assert spec.suggested_additions.material_categories == []
 
 
 # ---------------------------------------------------------------------------
