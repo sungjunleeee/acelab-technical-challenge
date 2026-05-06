@@ -77,7 +77,7 @@ def _company(name: str, score: float) -> CompanySearchResponse:
         results=[
             CompanySearchResult(
                 id="co", name=name, website="https://example.com",
-                status_name="Live on Acelab", similarity_score=score,
+                status_name="Published/Live on Acelab", similarity_score=score,
             )
         ],
         query=name, total_results=1, top_k=1,
@@ -89,7 +89,7 @@ def _products(*triples: tuple[str, str, float]) -> SearchResponse:
         results=[
             ProductSearchResult(
                 product_id=pid, manufacturer_product_name=name,
-                supplier_name=f"Supplier {pid}", market_status="Live on Acelab",
+                supplier_name=f"Supplier {pid}", market_status="Current Product",
                 similarity_score=score,
             )
             for pid, name, score in triples
