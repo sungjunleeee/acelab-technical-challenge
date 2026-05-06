@@ -59,7 +59,7 @@ export function GroundingReview({ initial, onConfirm, onBack }: Props) {
 
       {isEmpty && (
         <Card>
-          <CardBody>
+          <CardBody className="pt-5">
             <p className="text-sm text-zinc-600">
               Nothing to canonicalize. Continuing straight to product search.
             </p>
@@ -74,7 +74,7 @@ export function GroundingReview({ initial, onConfirm, onBack }: Props) {
           </h3>
           {initial.certifications.map((cert, i) => (
             <Card key={`cert-${i}`} className={!keepCert[i] ? 'opacity-50' : ''}>
-              <CardBody>
+              <CardBody className="pt-5">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
@@ -121,7 +121,7 @@ export function GroundingReview({ initial, onConfirm, onBack }: Props) {
           </h3>
           {initial.taxonomies.map((t, i) => (
             <Card key={`tax-${i}`} className={!keepTax[i] ? 'opacity-50' : ''}>
-              <CardBody>
+              <CardBody className="pt-5">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
@@ -168,7 +168,7 @@ export function GroundingReview({ initial, onConfirm, onBack }: Props) {
           </h3>
           {initial.brands.map((b, i) => (
             <Card key={`brand-${i}`} className={!keepBrand[i] ? 'opacity-50' : ''}>
-              <CardBody>
+              <CardBody className="pt-5">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
